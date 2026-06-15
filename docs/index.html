@@ -332,6 +332,7 @@
     <div class="nav-tab active" onclick="showPage('dashboard',this)">📊 Dashboard</div>
     <div class="nav-tab" onclick="showPage('contas',this)">📋 Contas</div>
     <div class="nav-tab" onclick="showPage('nova',this)">➕ Nova Conta</div>
+    <div class="nav-tab" onclick="showPage('config',this)">⚙️ Configurações</div>
     <div class="nav-tab" onclick="showPage('senha',this)">🔑 Minha Senha</div>
   </div>
 
@@ -474,6 +475,15 @@
       </div>
     </div>
 
+    <!-- Configurações -->
+    <div id="page-config" class="page">
+      <div class="section-header">
+        <div class="section-title">Configurações</div>
+        <button class="btn btn-secondary btn-sm" onclick="loadConfig()">↻ Atualizar</button>
+      </div>
+      <div id="config-grid" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:16px;"></div>
+    </div>
+
     <!-- Minha Senha -->
     <div id="page-senha" class="page">
       <div class="section-header">
@@ -566,6 +576,7 @@ async function doLogin() {
     document.getElementById('app').style.display = 'block';
     document.getElementById('topbar-user').textContent = u.nome;
     loadData();
+    loadConfig();
   } catch(e) {
     showError(err, 'Erro ao conectar. Verifique a API Key.');
   }
@@ -921,7 +932,9 @@ async function confirmarPagamento() {
     });
     const data = await r.json();
     if (!r.ok) throw new Error(data.error || 'Erro desconhecido');
-    toast('✅ Pagamento registrado!');
+    let msg = '✅ Pagamento registrado!';
+    if (data.proximoId) msg += ` 🔁 Próxima parcela: ${data.proximoId}`;
+    toast(msg);
     closeModal();
     await loadData();
   } catch(e) {
@@ -969,6 +982,131 @@ function showPage(name, el) {
   document.querySelectorAll('.nav-tab').forEach(t => t.classList.remove('active'));
   document.getElementById(`page-${name}`).classList.add('active');
   if (el) el.classList.add('active');
+}
+
+// ── Config dinâmica ───────────────────────────────────────────────────────────
+let configData = {};
+
+async function loadConfig() {
+  try {
+    const r = await fetch(`${API_URL}/config`);
+    configData = await r.json();
+    renderConfigPage();
+    updateFormSelects();
+  } catch(e) {
+    toast('Erro ao carregar configurações: ' + e.message, true);
+  }
+}
+
+function renderConfigPage() {
+  const grid = document.getElementById('config-grid');
+  if (!grid) return;
+  const labels = { Empresa: '🏢 Empresas', Categoria: '📂 Categorias', Conta: '🏦 Contas Bancárias', Status: '🔖 Status' };
+  grid.innerHTML = Object.entries(configData).map(([tipo, valores]) => `
+    <div class="card">
+      <div class="section-header" style="margin-bottom:12px;">
+        <div style="font-weight:600;">${labels[tipo] || tipo}</div>
+      </div>
+      <ul style="list-style:none;margin-bottom:12px;">
+        ${valores.map(v => `
+          <li style="display:flex;align-items:center;justify-content:space-between;padding:7px 0;border-bottom:1px solid var(--border);font-size:13px;">
+            <span id="cfg-val-${tipo}-${btoa(v).replace(/=/g,'')}">${v}</span>
+            <div style="display:flex;gap:6px;">
+              <button class="btn btn-secondary btn-sm" onclick="editConfig('${tipo}','${v.replace(/'/g,"\\'")}')">Editar</button>
+              <button class="btn btn-danger btn-sm" onclick="delConfig('${tipo}','${v.replace(/'/g,"\\'")}')">×</button>
+            </div>
+          </li>`).join('')}
+      </ul>
+      <div style="display:flex;gap:8px;">
+        <input type="text" id="cfg-new-${tipo}" placeholder="Novo valor..." style="flex:1;padding:7px 10px;font-size:13px;">
+        <button class="btn btn-success btn-sm" onclick="addConfig('${tipo}')">+ Adicionar</button>
+      </div>
+    </div>
+  `).join('');
+}
+
+function updateFormSelects() {
+  // Atualiza selects de empresa
+  ['n-empresa', 'filter-empresa'].forEach(id => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    const cur = el.value;
+    const opts = id.includes('filter') ? ['<option value="">Todas as empresas</option>'] : ['<option value="">Selecione</option>'];
+    (configData['Empresa'] || []).forEach(v => opts.push(`<option${cur===v?' selected':''}>${v}</option>`));
+    el.innerHTML = opts.join('');
+  });
+  // Atualiza selects de categoria
+  ['n-categoria', 'filter-cat'].forEach(id => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    const cur = el.value;
+    const opts = id.includes('filter') ? ['<option value="">Todas as categorias</option>'] : ['<option value="">Selecione</option>'];
+    (configData['Categoria'] || []).forEach(v => opts.push(`<option${cur===v?' selected':''}>${v}</option>`));
+    el.innerHTML = opts.join('');
+  });
+  // Atualiza select de conta no modal
+  const mc = document.getElementById('m-conta');
+  if (mc) {
+    const cur = mc.value;
+    mc.innerHTML = ['<option value="">Não informar</option>',
+      ...(configData['Conta'] || []).map(v => `<option${cur===v?' selected':''}>${v}</option>`)
+    ].join('');
+  }
+}
+
+async function addConfig(tipo) {
+  const input = document.getElementById(`cfg-new-${tipo}`);
+  const valor = input.value.trim();
+  if (!valor) return;
+  try {
+    const r = await fetch(`${API_URL}/config`, {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({ tipo, valor })
+    });
+    const d = await r.json();
+    if (!r.ok) throw new Error(d.error || 'Erro');
+    input.value = '';
+    toast(`✅ "${valor}" adicionado em ${tipo}`);
+    await loadConfig();
+  } catch(e) {
+    toast('Erro: ' + e.message, true);
+  }
+}
+
+async function delConfig(tipo, valor) {
+  if (!confirm(`Remover "${valor}" de ${tipo}?`)) return;
+  try {
+    const r = await fetch(`${API_URL}/config`, {
+      method: 'DELETE',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({ tipo, valor })
+    });
+    const d = await r.json();
+    if (!r.ok) throw new Error(d.error || 'Erro');
+    toast(`✅ "${valor}" removido`);
+    await loadConfig();
+  } catch(e) {
+    toast('Erro: ' + e.message, true);
+  }
+}
+
+async function editConfig(tipo, valor) {
+  const novo = prompt(`Editar "${valor}":`, valor);
+  if (!novo || novo === valor) return;
+  try {
+    const r = await fetch(`${API_URL}/config`, {
+      method: 'PUT',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({ tipo, valorAntigo: valor, valorNovo: novo })
+    });
+    const d = await r.json();
+    if (!r.ok) throw new Error(d.error || 'Erro');
+    toast(`✅ Atualizado para "${novo}"`);
+    await loadConfig();
+  } catch(e) {
+    toast('Erro: ' + e.message, true);
+  }
 }
 
 // ── Toast ─────────────────────────────────────────────────────────────────────
