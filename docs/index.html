@@ -276,6 +276,19 @@
 
   .loading-row td { text-align: center; padding: 32px; color: var(--text-3); }
 
+  /* ── Filter buttons ── */
+  .btn-filter {
+    padding: 6px 14px;
+    border-radius: 20px;
+    font-family: inherit; font-size: 12px; font-weight: 500;
+    cursor: pointer; border: 1.5px solid var(--border-md);
+    background: var(--surface); color: var(--text-2);
+    transition: all .15s;
+    white-space: nowrap;
+  }
+  .btn-filter:hover  { border-color: var(--accent); color: var(--accent); }
+  .btn-filter.active { background: var(--accent); border-color: var(--accent); color: #fff; }
+
   /* ── Responsive ── */
   @media (max-width: 640px) {
     .content { padding: 16px; }
@@ -340,6 +353,28 @@
 
     <!-- Dashboard -->
     <div id="page-dashboard" class="page active">
+
+      <!-- Filtros rápidos -->
+      <div style="display:flex;flex-wrap:wrap;gap:16px;margin-bottom:20px;align-items:center;">
+        <div>
+          <div style="font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.06em;color:var(--text-3);margin-bottom:6px;">Período</div>
+          <div style="display:flex;gap:6px;">
+            <button class="btn-filter active" id="f-todas"   onclick="setFiltro('periodo','todas')">Todas</button>
+            <button class="btn-filter"        id="f-mes"     onclick="setFiltro('periodo','mes')">Mês atual</button>
+            <button class="btn-filter"        id="f-7dias"   onclick="setFiltro('periodo','7dias')">7 dias</button>
+            <button class="btn-filter"        id="f-30dias"  onclick="setFiltro('periodo','30dias')">30 dias</button>
+          </div>
+        </div>
+        <div>
+          <div style="font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.06em;color:var(--text-3);margin-bottom:6px;">Empresa</div>
+          <div style="display:flex;gap:6px;">
+            <button class="btn-filter active" id="f-emp-todas" onclick="setFiltro('empresa','todas')">Todas</button>
+            <button class="btn-filter"        id="f-emp-nks"   onclick="setFiltro('empresa','nks')">NK Soluções</button>
+            <button class="btn-filter"        id="f-emp-nkp"   onclick="setFiltro('empresa','nkp')">NK Pré-Moldados</button>
+          </div>
+        </div>
+      </div>
+
       <div id="alerts-container"></div>
       <div class="stats-grid" id="stats-grid">
         <div class="stat-card"><div class="stat-label">Total Pendente</div><div class="stat-value accent" id="stat-total">—</div></div>
@@ -754,14 +789,63 @@ function todayISO() {
   return new Date().toISOString().split('T')[0];
 }
 
+// ── Filtros Dashboard ─────────────────────────────────────────────────────────
+const dashFiltros = { periodo: 'todas', empresa: 'todas' };
+
+function setFiltro(tipo, valor) {
+  dashFiltros[tipo] = valor;
+
+  // Atualiza botões ativos
+  if (tipo === 'periodo') {
+    ['f-todas','f-mes','f-7dias','f-30dias'].forEach(id => {
+      document.getElementById(id)?.classList.remove('active');
+    });
+    const map = { todas:'f-todas', mes:'f-mes', '7dias':'f-7dias', '30dias':'f-30dias' };
+    document.getElementById(map[valor])?.classList.add('active');
+  }
+  if (tipo === 'empresa') {
+    ['f-emp-todas','f-emp-nks','f-emp-nkp'].forEach(id => {
+      document.getElementById(id)?.classList.remove('active');
+    });
+    const map = { todas:'f-emp-todas', nks:'f-emp-nks', nkp:'f-emp-nkp' };
+    document.getElementById(map[valor])?.classList.add('active');
+  }
+  renderDashboard();
+}
+
+function applyDashFiltros(contas) {
+  const hoje = new Date(); hoje.setHours(0,0,0,0);
+  return contas.filter(c => {
+    if (c.Cancelado === 'Sim') return false;
+
+    // Filtro empresa
+    if (dashFiltros.empresa === 'nks' && c.Empresa !== 'NK Soluções')     return false;
+    if (dashFiltros.empresa === 'nkp' && c.Empresa !== 'NK Pré-Moldados') return false;
+
+    // Filtro período (sobre vencimento)
+    if (dashFiltros.periodo !== 'todas') {
+      const d = parseDate(c.Vencimento);
+      if (!d) return false;
+      const diff = Math.round((d - hoje) / 86400000);
+      if (dashFiltros.periodo === 'mes') {
+        if (d.getMonth() !== hoje.getMonth() || d.getFullYear() !== hoje.getFullYear()) return false;
+      }
+      if (dashFiltros.periodo === '7dias'  && (diff < -1 || diff > 7))  return false;
+      if (dashFiltros.periodo === '30dias' && (diff < -1 || diff > 30)) return false;
+    }
+    return true;
+  });
+}
+
 // ── Dashboard ─────────────────────────────────────────────────────────────────
 function renderDashboard() {
-  const pendentes  = allContas.filter(c => c.Status !== 'Pago');
+  const filtradas = applyDashFiltros(allContas);
+  const pendentes  = filtradas.filter(c => c.Status !== 'Pago');
   const atrasadas  = pendentes.filter(c => { const d = daysUntil(c.Vencimento); return d !== null && d < 0; });
   const hoje_list  = pendentes.filter(c => daysUntil(c.Vencimento) === 0);
   const prox7      = pendentes.filter(c => { const d = daysUntil(c.Vencimento); return d !== null && d >= 1 && d <= 7; });
   const mes_atual  = new Date().getMonth();
-  const pagas_mes  = allContas.filter(c => {
+  const pagas_mes  = filtradas.filter(c => {
     if (c.Status !== 'Pago') return false;
     const d = parseDate(c.DataPagamento);
     return d && d.getMonth() === mes_atual;
@@ -775,7 +859,7 @@ function renderDashboard() {
   document.getElementById('stat-7dias').textContent     = prox7.length;
   document.getElementById('stat-pagas').textContent     = pagas_mes.length;
 
-  // Alerts
+  // Alerts — só mostra se filtro empresa = todas ou específica
   const ac = document.getElementById('alerts-container');
   ac.innerHTML = '';
   if (atrasadas.length) {
@@ -785,7 +869,7 @@ function renderDashboard() {
     ac.innerHTML += `<div class="alert-banner alert-amber">🚨 <div><strong>${hoje_list.length} conta(s) vencendo hoje:</strong> ${hoje_list.map(c=>`${c.Credor} (${fmtBRL(c.Valor)})`).join(', ')}</div></div>`;
   }
 
-  // Dash table — próximos vencimentos (pendentes ordenados)
+  // Tabela — pendentes ordenados por vencimento
   const sorted = [...pendentes].sort((a,b) => {
     const da = parseDate(a.Vencimento), db = parseDate(b.Vencimento);
     if (!da && !db) return 0; if (!da) return 1; if (!db) return -1;
@@ -794,7 +878,7 @@ function renderDashboard() {
 
   const tbody = document.getElementById('dash-tbody');
   if (!sorted.length) {
-    tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;padding:32px;color:var(--text-3);">✅ Nenhuma conta pendente</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;padding:32px;color:var(--text-3);">✅ Nenhuma conta pendente para o filtro selecionado</td></tr>';
     return;
   }
   tbody.innerHTML = sorted.map(c => {
