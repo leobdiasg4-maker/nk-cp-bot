@@ -35,7 +35,7 @@ COLS = [
     "ID", "Empresa", "Categoria", "Descrição", "Credor",
     "Valor (R$)", "Vencimento", "Status", "Data Pagamento",
     "Valor Pago", "Conta Bancária", "Recorrente", "Frequência",
-    "Observação", "Lançado por", "Criado em"
+    "Observação", "Lançado por", "Criado em", "Cancelado", "Motivo Cancelamento"
 ]
 
 (S_EMPRESA, S_CATEGORIA, S_DESCRICAO, S_CREDOR, S_VALOR,
@@ -102,6 +102,19 @@ def next_id(ws) -> str:
     return f"CP{(max(vals)+1 if vals else 1):04d}"
 
 def get_all_contas(ws):
+    rows = ws.get_all_values()
+    if len(rows) <= 1:
+        return []
+    headers = rows[0]
+    result = []
+    for r in rows[1:]:
+        d = dict(zip(headers, r))
+        if d.get("Cancelado") == "Sim":
+            continue  # ignora canceladas nas listagens normais
+        result.append(d)
+    return result
+
+def get_all_contas_incluindo_canceladas(ws):
     rows = ws.get_all_values()
     if len(rows) <= 1:
         return []
@@ -417,6 +430,40 @@ async def cmd_pagar(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         await update.message.reply_text(f"❌ Erro: {e}")
 
+# ── /cancelar ─────────────────────────────────────────────────────────────────
+async def cmd_cancelar_conta(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    Uso: /cancelar CP0001 Motivo aqui
+    """
+    if not is_authorized(update): return
+    args = context.args
+    if len(args) < 2:
+        await update.message.reply_text(
+            "Uso: `/cancelar CP0001 Motivo aqui`\nEx: `/cancelar CP0003 Lançamento duplicado`",
+            parse_mode="Markdown")
+        return
+    cp_id  = args[0].upper()
+    motivo = " ".join(args[1:])
+    try:
+        sh   = get_sheet()
+        ws   = sh.worksheet("Contas")
+        rows = ws.get_all_values()
+        row_idx = None
+        for i, row in enumerate(rows[1:], start=2):
+            if row[0] == cp_id:
+                row_idx = i
+                break
+        if not row_idx:
+            await update.message.reply_text(f"❌ ID *{cp_id}* não encontrado.", parse_mode="Markdown")
+            return
+        # Coluna Q=17, R=18
+        ws.update(f"Q{row_idx}:R{row_idx}", [["Sim", motivo]])
+        await update.message.reply_text(
+            f"🚫 *{cp_id}* cancelado.\nMotivo: _{motivo}_",
+            parse_mode="Markdown")
+    except Exception as e:
+        await update.message.reply_text(f"❌ Erro: {e}")
+
 # ── /listar ────────────────────────────────────────────────────────────────────
 async def cmd_listar(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_authorized(update): return
@@ -560,6 +607,7 @@ def main():
     app.add_handler(CommandHandler("ajuda",         cmd_ajuda))
     app.add_handler(CommandHandler("cp",            cmd_cp))
     app.add_handler(CommandHandler("pagar",         cmd_pagar))
+    app.add_handler(CommandHandler("cancelar",      cmd_cancelar_conta))
     app.add_handler(CommandHandler("listar",        cmd_listar))
     app.add_handler(CommandHandler("resumo",        cmd_resumo))
     app.add_handler(CommandHandler("resumo_dia",    cmd_resumo_dia))
