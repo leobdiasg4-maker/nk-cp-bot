@@ -114,6 +114,14 @@ def next_vencimento(venc_str: str, freq: str) -> str:
 def health():
     return jsonify({"status": "ok", "service": "NK Contas API"})
 
+@app.route("/config-publica", methods=["GET"])
+def config_publica():
+    """Retorna configurações públicas para o frontend."""
+    return jsonify({
+        "sheetId": os.environ.get("SHEET_ID", ""),
+        "apiKey":  os.environ.get("GOOGLE_API_KEY", ""),
+    })
+
 # ── Config ────────────────────────────────────────────────────────────────────
 @app.route("/config", methods=["GET"])
 def get_config():
@@ -304,6 +312,22 @@ def pagar_conta():
         return jsonify({"ok": True, "proximoId": proximo_id})
     except Exception as e:
         log.error("pagar_conta: %s", e)
+        return jsonify({"error": str(e)}), 500
+
+@app.route("/contas/cancelar", methods=["PUT"])
+def cancelar_conta():
+    try:
+        body      = request.json
+        row_index = int(body["rowIndex"])
+        motivo    = body.get("motivo", "").strip()
+        if not motivo:
+            return jsonify({"error": "Motivo é obrigatório"}), 400
+        w = ws("Contas")
+        # Coluna Q (17) = Cancelado, Coluna R (18) = Motivo Cancelamento
+        w.update(f"Q{row_index}:R{row_index}", [["Sim", motivo]])
+        return jsonify({"ok": True})
+    except Exception as e:
+        log.error("cancelar_conta: %s", e)
         return jsonify({"error": str(e)}), 500
 
 # ── Main ──────────────────────────────────────────────────────────────────────
