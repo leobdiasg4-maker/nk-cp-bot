@@ -392,6 +392,11 @@
           <option>Folha</option><option>Fornecedor</option><option>Aluguel</option>
           <option>Empréstimo</option><option>Honorários</option><option>Outros</option>
         </select>
+        <select id="filter-canceladas" onchange="renderContas()">
+          <option value="nao">Ocultar canceladas</option>
+          <option value="sim">Ver canceladas</option>
+          <option value="todas">Todas</option>
+        </select>
       </div>
       <div class="card">
         <div class="table-wrap">
@@ -541,14 +546,38 @@
   </div>
 </div>
 
+<!-- ── Modal Cancelar ─────────────────────────────────────────────────────── -->
+<div class="modal-overlay" id="modal-cancelar">
+  <div class="modal">
+    <div class="modal-title">🚫 Cancelar Conta</div>
+    <div id="modal-cancelar-info" style="background:var(--bg);border-radius:8px;padding:12px;margin-bottom:16px;font-size:13px;"></div>
+    <div class="field">
+      <label>Motivo do cancelamento *</label>
+      <textarea id="m-motivo" rows="3" placeholder="Ex: Lançamento duplicado, conta paga por outro meio..."></textarea>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-secondary" onclick="closeCancelarModal()">Voltar</button>
+      <button class="btn btn-danger" onclick="confirmarCancelamento()">🚫 Confirmar Cancelamento</button>
+    </div>
+  </div>
+</div>
+
 <div id="toast"></div>
 
 <script>
 // ── Config ──────────────────────────────────────────────────────────────────
-const SHEET_ID  = '1ZXQo5V2NomogdETrKMNfN42GWXGrGWmSXdls1vdifD0';
-const API_KEY   = 'AIzaSyAfm5mFcollQjo_18yx515XUm5O94y13ss';
-const BASE_URL  = `https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}`;
-const API_URL = 'https://nk-cp-bot-production.up.railway.app';
+const API_URL  = 'https://nk-cp-bot-production.up.railway.app';
+let   SHEET_ID = '';
+let   API_KEY  = '';
+let   BASE_URL = '';
+
+async function initConfig() {
+  const r = await fetch(`${API_URL}/config-publica`);
+  const d = await r.json();
+  SHEET_ID = d.sheetId;
+  API_KEY  = d.apiKey;
+  BASE_URL = `https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}`;
+}
 
 // ── State ────────────────────────────────────────────────────────────────────
 let currentUser = null;
@@ -566,6 +595,7 @@ async function doLogin() {
   if (!user || !pass) { showError(err, 'Preencha usuário e senha.'); return; }
 
   try {
+    if (!SHEET_ID) await initConfig();
     await loadUsuarios();
     const u = usuarios.find(u => u.login === user);
     if (!u) { showError(err, 'Usuário não encontrado.'); return; }
@@ -629,28 +659,30 @@ async function loadUsuarios() {
 // ── Load Data ────────────────────────────────────────────────────────────────
 async function loadData() {
   try {
-    const rows = await sheetGet('Contas!A:P');
+    const rows = await sheetGet('Contas!A:R');
     if (rows.length <= 1) { allContas = []; }
     else {
       const [header, ...data] = rows;
       allContas = data.map((r, i) => ({
         rowIndex: i + 2,
-        ID:           r[0]  || '',
-        Empresa:      r[1]  || '',
-        Categoria:    r[2]  || '',
-        Descrição:    r[3]  || '',
-        Credor:       r[4]  || '',
-        Valor:        r[5]  || '0',
-        Vencimento:   r[6]  || '',
-        Status:       r[7]  || 'Pendente',
-        DataPagamento:r[8]  || '',
-        ValorPago:    r[9]  || '',
-        ContaBancaria:r[10] || '',
-        Recorrente:   r[11] || '',
-        Frequência:   r[12] || '',
-        Observação:   r[13] || '',
-        LancadoPor:   r[14] || '',
-        CriadoEm:     r[15] || '',
+        ID:                    r[0]  || '',
+        Empresa:               r[1]  || '',
+        Categoria:             r[2]  || '',
+        Descrição:             r[3]  || '',
+        Credor:                r[4]  || '',
+        Valor:                 r[5]  || '0',
+        Vencimento:            r[6]  || '',
+        Status:                r[7]  || 'Pendente',
+        DataPagamento:         r[8]  || '',
+        ValorPago:             r[9]  || '',
+        ContaBancaria:         r[10] || '',
+        Recorrente:            r[11] || '',
+        Frequência:            r[12] || '',
+        Observação:            r[13] || '',
+        LancadoPor:            r[14] || '',
+        CriadoEm:              r[15] || '',
+        Cancelado:             r[16] || '',
+        'Motivo Cancelamento': r[17] || '',
       }));
     }
     renderDashboard();
@@ -781,15 +813,19 @@ function renderDashboard() {
 
 // ── Contas ────────────────────────────────────────────────────────────────────
 function renderContas() {
-  const search  = document.getElementById('filter-search').value.toLowerCase();
-  const empresa = document.getElementById('filter-empresa').value;
-  const status  = document.getElementById('filter-status').value;
-  const cat     = document.getElementById('filter-cat').value;
+  const search      = document.getElementById('filter-search').value.toLowerCase();
+  const empresa     = document.getElementById('filter-empresa').value;
+  const status      = document.getElementById('filter-status').value;
+  const cat         = document.getElementById('filter-cat').value;
+  const canceladas  = document.getElementById('filter-canceladas')?.value || 'nao';
 
   let filtered = allContas.filter(c => {
-    if (empresa && c.Empresa !== empresa) return false;
-    if (status  && c.Status  !== status)  return false;
-    if (cat     && c.Categoria !== cat)   return false;
+    const isCancelada = c.Cancelado === 'Sim';
+    if (canceladas === 'nao'   &&  isCancelada) return false;
+    if (canceladas === 'sim'   && !isCancelada) return false;
+    if (empresa && c.Empresa   !== empresa)     return false;
+    if (status  && c.Status    !== status)      return false;
+    if (cat     && c.Categoria !== cat)         return false;
     if (search  && !`${c.Credor} ${c.Descrição}`.toLowerCase().includes(search)) return false;
     return true;
   });
@@ -806,18 +842,24 @@ function renderContas() {
     return;
   }
   tbody.innerHTML = filtered.map(c => {
-    const days = daysUntil(c.Vencimento);
-    return `<tr>
+    const days       = daysUntil(c.Vencimento);
+    const cancelada  = c.Cancelado === 'Sim';
+    const rowStyle   = cancelada ? 'opacity:.5;' : '';
+    const acoes = cancelada
+      ? `<span style="font-size:11px;color:var(--red);">🚫 ${c['Motivo Cancelamento'] || 'Cancelado'}</span>`
+      : `<div style="display:flex;gap:6px;flex-wrap:wrap;">
+          ${c.Status !== 'Pago' ? `<button class="btn btn-success btn-sm" onclick="openPagar(${c.rowIndex})">✅ Pagar</button>` : ''}
+          <button class="btn btn-danger btn-sm" onclick="openCancelar(${c.rowIndex})">🚫</button>
+        </div>`;
+    return `<tr style="${rowStyle}">
       <td><code style="font-size:11px;color:var(--text-3);">${c.ID}</code></td>
       <td style="font-size:12px;">${c.Empresa}</td>
       <td><span style="font-size:11px;background:var(--bg);padding:2px 6px;border-radius:4px;">${c.Categoria}</span></td>
       <td>${c.Credor}<br><span style="font-size:11px;color:var(--text-3);">${c.Descrição}</span></td>
       <td><strong>${fmtBRL(c.Valor)}</strong></td>
       <td>${fmtDate(c.Vencimento)} ${prazoLabel(days)}</td>
-      <td>${statusBadge(c.Status, days)}</td>
-      <td style="white-space:nowrap;">
-        ${c.Status !== 'Pago' ? `<button class="btn btn-success btn-sm" onclick="openPagar(${c.rowIndex})">✅ Pagar</button>` : '<span style="color:var(--text-3);font-size:12px;">—</span>'}
-      </td>
+      <td>${cancelada ? '<span class="badge badge-atrasado">Cancelado</span>' : statusBadge(c.Status, days)}</td>
+      <td style="white-space:nowrap;">${acoes}</td>
     </tr>`;
   }).join('');
 }
@@ -983,6 +1025,48 @@ function showPage(name, el) {
   document.getElementById(`page-${name}`).classList.add('active');
   if (el) el.classList.add('active');
 }
+
+// ── Modal Cancelar ────────────────────────────────────────────────────────────
+let cancelarCtx = null;
+
+function openCancelar(rowIndex) {
+  const c = allContas.find(x => x.rowIndex === rowIndex);
+  if (!c) return;
+  cancelarCtx = { rowIndex, conta: c };
+  document.getElementById('modal-cancelar-info').innerHTML =
+    `<strong>${c.ID}</strong> — ${c.Credor}<br>${c.Empresa} | ${fmtBRL(c.Valor)} | Vence: ${fmtDate(c.Vencimento)}`;
+  document.getElementById('m-motivo').value = '';
+  document.getElementById('modal-cancelar').classList.add('open');
+}
+
+function closeCancelarModal() {
+  document.getElementById('modal-cancelar').classList.remove('open');
+  cancelarCtx = null;
+}
+
+async function confirmarCancelamento() {
+  if (!cancelarCtx) return;
+  const motivo = document.getElementById('m-motivo').value.trim();
+  if (!motivo) { toast('Informe o motivo do cancelamento.', true); return; }
+  try {
+    const r = await fetch(`${API_URL}/contas/cancelar`, {
+      method: 'PUT',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ rowIndex: cancelarCtx.rowIndex, motivo })
+    });
+    const data = await r.json();
+    if (!r.ok) throw new Error(data.error || 'Erro desconhecido');
+    toast('🚫 Conta cancelada e registrada.');
+    closeCancelarModal();
+    await loadData();
+  } catch(e) {
+    toast('Erro: ' + e.message, true);
+  }
+}
+
+document.getElementById('modal-cancelar').addEventListener('click', e => {
+  if (e.target === document.getElementById('modal-cancelar')) closeCancelarModal();
+});
 
 // ── Config dinâmica ───────────────────────────────────────────────────────────
 let configData = {};
